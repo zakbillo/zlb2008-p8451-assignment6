@@ -12,6 +12,7 @@ library(rpart.plot)
 library(pROC)
 library(kernlab)
 library(NHANES)
+library(e1071)
 
 knitr::opts_chunk$set(
   fig.width = 8,
@@ -50,7 +51,7 @@ str(NHANES) # briefly examine what we have
 # exclude weight and height due to multicollinearity with bmi
 NHANES <- NHANES |> 
   janitor::clean_names() |>
-  select(age, race1, education, hh_income, pulse, diabetes, bmi, phys_active, smoke100)   |> drop_na() 
+  select(age, race1, education, hh_income, pulse, diabetes, bmi, phys_active, smoke100) |> drop_na() 
 
 # Centering and Scaling
 set.up.preprocess <- preProcess(NHANES , method = c("center", "scale"))
@@ -63,6 +64,10 @@ train.index <- createDataPartition(NHANES$diabetes, p = 0.7, list = FALSE)
 
 nhanes.train <- NHANES[train.index, ]
 nhanes.test <- NHANES[-train.index, ]
+
+summary(NHANES$diabetes)
+summary(nhanes.train$diabetes)
+summary(nhanes.test$diabetes)
 ```
 
 I excluded weight and height due to multicollinearity between the predictors with BMI. We split training and test data in 70/30 partitions by diabetes status. 
@@ -71,12 +76,120 @@ I excluded weight and height due to multicollinearity between the predictors wit
 
 a) Classification Tree
 
+```{r}
+set.seed(123)
+
+# 10-fold cross-validation and using down-sampling because of imbalance in data
+train.control.class<-trainControl(method="cv", number=10, sampling="down")
+
+# sequence of cp parameters to try 
+grid.1<-expand.grid(cp=seq(0.001, 0.3, by=0.01))
+
+# train model
+tree.nhanes <-train(
+                      diabetes~., 
+                      data=nhanes.train, 
+                      method="rpart",
+                      trControl=train.control.class, 
+                      tuneGrid=grid.1
+                      )
+
+tree.nhanes$bestTune
+tree.nhanes
+
+tree.nhanes$finalModel %>%
+  rpart.plot()
+
+# obtain variable importance on the final model within training data
+varImp(tree.nhanes)
+
+# accuracy metric and confusion matrix from training
+confusionMatrix(tree.nhanes)
+```
+
+The CART model was trained with 10-fold cross-validation, yielding a final value of 0.001 for the complexity parameter $Cp$ and an average accuracy of 70.8% (based on the confusion matrix). 
+
 b) Support Vector Classifier (i.e. Support Vector Machine with a linear classifier)
+
+```{r}
+set.seed(123)
+
+# train model, note i already centered + scaled the data
+# also set 10-fold cross-validation. for predicted probabilities, set class Probs=True
+train_control<-trainControl(method="cv", number=10, sampling = "down", classProbs = T)
+
+# incorporate different values for cost (C)
+svm.caret <- train(
+                    diabetes ~ ., 
+                    data=nhanes.train, 
+                    method="svmLinear",  
+                    trControl=train_control, 
+                    #preProcess=c("center", "scale"), 
+                    tuneGrid=expand.grid(C=seq(0.001,2, length=30))
+                    )
+
+#Visualize accuracy versus values of C
+plot(svm.caret)
+
+#Obtain metrics of accuracy from training
+confusionMatrix(svm.caret)
+
+#See information about final model
+svm.caret$finalModel
+```
+
+The Support Vector Machines with Linear Kernel was trained with 10-fold cross-validation, yielding a final value of 0.552 for the complexity parameter $Cp$ and an average accuracy of 72.4% (based on the confusion matrix). 
 
 c) Logistic regression.
 
+```{r}
+set.seed(123)
+
+train.control.lr <- trainControl(method="cv", number=10, sampling="down")
+
+nhanes.lr <- train(
+  diabetes ~ .,
+  data = nhanes.train,
+  method = "glm",
+  family = "binomial",
+  trControl = train.control.lr
+)
+
+nhanes.lr
+```
+
+The logistic regression model was trained with 10-fold cross-validation, yielding an average accuracy of 71.8%. 
+
 4. Select an "optimal" model and calculate final evaluation metrics in the test set. ONLY ONE MODEL SHOULD BE APPLIED IN THE TEST SET What do you conclude about your final model's performance?
+
+I'm going with the SVM w/ Linear Kernels because it was the most accurate (72.4%, compared to 70.8% for CART and 71.8% for LR) 
+
+```{r}
+set.seed(123)
+
+# make predictions in testset
+svm.pred.test <- svm.caret %>% 
+              predict(nhanes.test)
+
+#Get evaluation metrics from test set
+confusionMatrix(svm.pred.test, nhanes.test$diabetes, positive="Yes")
+
+#Create ROC Curve for Analysis
+pred.prob <- svm.caret %>% 
+  predict(nhanes.test, type = "prob")
+
+#Create plot of Area under the Receiver Operating Curve (AUROC)
+analysis <- roc(response=nhanes.test$diabetes, predictor=pred.prob[,2])
+plot(1-analysis$specificities,analysis$sensitivities,type="l",
+ylab="Sensitivity",xlab="1-Specificity",col="black",lwd=2,
+main = "ROC Curve for Heart Disease Classification")
+abline(a=0,b=1)
+
+auc(analysis)
+```
+
+The final model, which uses SVM w/ Linear Kernels, has an accuracy of 73.4% and recall (Sensitivity) of 81.7% and True Negative Rate (Specificity) of 72.4%. With an AUC of 82.2, we can say this model does a good job differentiating between diabetic and non-diabetic individuals.
 
 5. In this analysis, we've used Race as one of the predictors in the model. Briefly discuss the ethical considerations of including race in a disease prediction model. (no more than 1-2 paragraphs)
 
- 
+Race is potentially an unethical predictor based on the fact that it may be a poor approximation for the conditions that give rise to differential diabetes case prevalence across demographics. For example, race (Black, white, etc.) is probably less indicative of latent diabetic class assignment than say food access, zip-code, heritable, or pre-birth factors (such as gestational diabetes in the mother). While race may be a powerful predictor in the context of feature importance in our model, it does not reflect the entirety of, nor the best proxy for, the complex phenomena that we are interested in understanding.

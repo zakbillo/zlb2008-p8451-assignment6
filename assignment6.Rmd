@@ -1,0 +1,82 @@
+---
+title: "Assignment 6"
+output: html_document
+date: "2026-03-02"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(rpart)
+library(caret)
+library(rpart.plot)
+library(pROC)
+library(kernlab)
+library(NHANES)
+
+knitr::opts_chunk$set(
+  fig.width = 8,
+  fig.height = 6,
+  fig.align = "center",
+  out.width = "90%"
+)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+set.seed(123) # EXTRA IMPORTANT 
+```
+
+1. Load the NHANES data using the NHANES R package
+
+```{r}
+data(NHANES) # initialize data
+
+str(NHANES) # briefly examine what we have
+```
+
+2. Restrict the NHANES data to the list of 11 variables below. Partition the data into training and testing using a 70/30 split. Perform light data cleaning. Determine if you want to exclude any of the features before you start. 
+
+"Age", "Race1", "Education", "HHIncome", "Weight", "Height", "Pulse", "Diabetes", "BMI", "PhysActive", "Smoke100"
+
+```{r}
+# filter data, clean names
+# exclude weight and height due to multicollinearity with bmi
+NHANES <- NHANES |> 
+  janitor::clean_names() |>
+  select(age, race1, education, hh_income, pulse, diabetes, bmi, phys_active, smoke100)   |> drop_na() 
+
+# Centering and Scaling
+set.up.preprocess <- preProcess(NHANES , method = c("center", "scale"))
+
+# Output pre-processed values
+transformed.vals <- predict(set.up.preprocess, NHANES)
+
+# Creating balanced partitions in the data
+train.index <- createDataPartition(NHANES$diabetes, p = 0.7, list = FALSE)
+
+nhanes.train <- NHANES[train.index, ]
+nhanes.test <- NHANES[-train.index, ]
+```
+
+I excluded weight and height due to multicollinearity between the predictors with BMI. We split training and test data in 70/30 partitions by diabetes status. 
+
+3. Construct three prediction models to predict diabetes using the features from NHANES. You will optimize each model using cross-validation to choose hyperparameters in the training data and then compare performance across models. You will use the following three algorithms to create your prediction models:
+
+a) Classification Tree
+
+b) Support Vector Classifier (i.e. Support Vector Machine with a linear classifier)
+
+c) Logistic regression.
+
+4. Select an "optimal" model and calculate final evaluation metrics in the test set. ONLY ONE MODEL SHOULD BE APPLIED IN THE TEST SET What do you conclude about your final model's performance?
+
+5. In this analysis, we've used Race as one of the predictors in the model. Briefly discuss the ethical considerations of including race in a disease prediction model. (no more than 1-2 paragraphs)
+
+ 
